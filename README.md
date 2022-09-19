@@ -6,6 +6,14 @@
 
 # Installation 📦
 
+## Arch linux 🐧 - Use your AUR helper
+
+```bash
+yay -S sorting-algorithms
+```
+
+## Other - build from source ⚙️
+
 Run make 
 
 ```bash
