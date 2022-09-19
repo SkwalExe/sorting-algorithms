@@ -6,24 +6,31 @@
 
 # Installation 📦
 
-## Build from source - Linux 🐧 & Windows 🪟
-
-Create a build folder 
+Run make 
 
 ```bash
-# sorting-algorithms
-mkdir build
+# 📂 sorting-algorithms
+make
 ```
 
-Build with clang
+Add binary to bin folder
 
 ```bash
-clang src/*.c -o build/sorting-algorithms
+# 📂 sorting-algorithms
+make install
 ```
 
 # Usage 📝
 
 ![](assets/usage.png)
+
+# Uninstall
+
+```bash
+# 📂 sorting-algorithms
+make uninstall
+# This will just delete /usr/bin/sorting-algorithms
+```
 
 # final
 
