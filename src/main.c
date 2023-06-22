@@ -3,17 +3,35 @@
 #include <time.h>
 #include <string.h>
 #include <stdbool.h>
+#include <signal.h>
 #include "utils.h"
 
-#define RED "\033[91m"
-#define YELLOW "\033[93m"
-#define PURPLE "\033[95m"
-#define WHITE "\033[97m"
-#define RESET "\033[0m"
+#define RED "\x1b[91m"
+#define YELLOW "\x1b[93m"
+#define PURPLE "\x1b[95m"
+#define WHITE "\x1b[97m"
+#define RED_BG "\x1b[41m"
+#define YELLOW_BG "\x1b[43m"
+#define PURPLE_BG "\x1b[45m"
+#define WHITE_BG "\x1b[47m"
 
-#define VERSION "0.1.0"
+#define RESET "\x1b[0m"
+#define RED_BLOCK RED_BG "  " RESET
+#define YELLOW_BLOCK YELLOW_BG "  " RESET
+#define PURPLE_BLOCK PURPLE_BG "  " RESET
+#define WHITE_BLOCK WHITE_BG "  " RESET
+
+
+#define VERSION "0.2.0"
+#define TOP_SPACE 2
 
 typedef int bar;
+typedef struct barlist
+{
+  bar *bars;
+  int selected;
+  int len;
+} barlist;
 
 int width = 0, height = 0;
 
@@ -24,81 +42,176 @@ int width = 0, height = 0;
 int algorithm = 0;
 
 int step = 15;
+int precision = 100;
+
+void sigint_handler(int sig)
+{
+  if (sig == SIGINT)
+  {
+    print_at(0, height + TOP_SPACE + 2, "\n\nBye !\n");
+    show_cursor();
+    exit(0);
+  }
+}
+
+void set_signal_action(void)
+{
+  struct sigaction act;
+
+  memset(&act, 0, sizeof(act));
+  act.sa_handler = &sigint_handler;
+  sigaction(SIGINT, &act, NULL);
+}
+
+
 
 // Inverse bar at index a with bar at index b
-void inverse(bar bars[width], int a, int b)
+void inverse(barlist *bars, int a, int b)
 {
-  bar temp = bars[a];
-  bars[a] = bars[b];
-  bars[b] = temp;
+  bar temp = bars->bars[a];
+  bars->bars[a] = bars->bars[b];
+  bars->bars[b] = temp;
 }
 
-// print bars for ms milliseconds
-// focused_index = -1 to ingore
-void show(bar bars[width], int focused_index, char *text, int ms)
+void show_bar(int bar_height, int prev_bar_height, int x, bool selected, bool prev_selected)
 {
-  clear_terminal();
-  printf("%s\n", text);
-  for (int y = height; y >= 0; y--)
+  // real height in the terminal
+  int real_bar_height = bar_height * height / precision;
+  int real_prev_bar_height = prev_bar_height * height / precision;
+
+  // If the bar was not selected before
+  if (!prev_selected)
   {
-    for (int x = 0; x < width; x++)
+    // If the bar was raised and still isn't selected
+    if (!selected && bar_height > prev_bar_height)
     {
-      // height relative to term height
-      float h = height * bars[x] / 100.0;
-      if (h > y)
-      {
-        printf("\x1b[4%cm  \x1b[0m", focused_index == x ? '5' : '7');
-      }
-      else
-      {
-        printf("  ");
-      }
+      // Draw the top in white
+      for (int y = height - real_bar_height + 1 + TOP_SPACE; y < height - real_prev_bar_height + 1 + TOP_SPACE; y++)
+        print_at(x * 2, y, WHITE_BLOCK);
+      return;
     }
-    printf("\n");
+    // if it was lowered
+    else if (bar_height < prev_bar_height)
+    {
+      // Erase the top of the bar
+      for (int y = height - real_prev_bar_height + 1 + TOP_SPACE; y < height - real_bar_height + 1 + TOP_SPACE; y++)
+        print_at(x * 2, y, "  ");
+    }
+
+    // and redraw the bar in red if now selected
+    if (selected)
+    {
+      for (int y = height - real_bar_height + 1 + TOP_SPACE; y < height + 1 + TOP_SPACE; y++)
+        print_at(x * 2, y, RED_BLOCK);
+    }
   }
+  else 
+  // If the bar was selected before
+  { 
+    // if it was raised
+    // and is still selected
+    if (selected && bar_height > prev_bar_height)
+    { 
+      // Draw the top in red
+      // The bottom should already be in red
+      for (int y = height - real_bar_height + 1 + TOP_SPACE; y < height - real_prev_bar_height + 1 + TOP_SPACE; y++)
+        print_at(x * 2, y, RED_BLOCK);
+    }
+    // If the bar was lowered
+    else if (bar_height < prev_bar_height)
+    {
+      // Erase the top of the bar
+      for (int y = height - real_prev_bar_height + 1 + TOP_SPACE; y < height - real_bar_height + 1 + TOP_SPACE; y++)
+        print_at(x * 2, y, "  ");
+    }
+
+    // if it is no longer selected
+    // redraw the bar in white
+    // if it is still selected
+    // the bar should already be in red
+    if (!selected)
+    {
+      for (int y = height - real_bar_height + 1 + TOP_SPACE; y < height + 1 + TOP_SPACE; y++)
+        print_at(x * 2, y, WHITE_BLOCK);
+    }
+
+  }
+}
+
+void show(barlist *bars, barlist *prev_bars, char *text, int ms)
+{
+  print_at(0, 0, "");
+  printf("\33[2K");
+  print_at(0, 0, text);
+
+
+  bool selection_changed = bars->selected != prev_bars->selected;
+
+
+  for (int i = 0; i < bars->len; i++) 
+  {
+    // If the bar height has changed
+    // or if the bar has been selected or deselected
+    if (bars->bars[i] != prev_bars->bars[i] || (selection_changed && (bars->selected == i || prev_bars->selected == i)))
+    {
+      show_bar(bars->bars[i], prev_bars->bars[i], i, bars->selected == i, prev_bars->selected == i);
+      prev_bars->bars[i] = bars->bars[i];        
+    }
+  }
+
+  if (selection_changed)
+    prev_bars->selected = bars->selected;
+
+
+  fflush(stdout);
   sleep_ms(ms);
 }
-void shuffle(bar bars[width])
+void shuffle(barlist *bars, barlist *prev_bars)
 {
-  for (int x = 0; x < width; x++)
+  for (int x = 0; x < bars->len; x++)
   {
-    int swap_with = random_int(0, width - 1);
+    int swap_with = random_int(0, bars->len - 1);
     inverse(bars, x, swap_with);
-    show(bars, swap_with, "shuffling", step);
+    bars->selected = swap_with;
+    show(bars, prev_bars, "shuffling", step);
   }
-
-  show(bars, -1, "Preparing", 1000);
+  bars->selected = -1;
+  show(bars, prev_bars, "Preparing", 1000);
 }
 
-void highlight_all(bar bars[width])
+void highlight_all(barlist *bars, barlist *prev_bars)
+{
+  for (int i = 0; i < bars->len; i++)
+  {
+    bars->selected = i;
+    show(bars, prev_bars, "sorted", step);
+  }
+  bars->selected = -1;
+  show(bars, prev_bars, "sorted", 1000);
+}
+
+void selection_sort(barlist *bars, barlist *prev_bars)
 {
   for (int i = 0; i < width; i++)
   {
-    show(bars, i, "sorted", step);
-  }
-  show(bars, -1, "sorted", 1000);
-}
-
-void selection_sort(bar bars[width])
-{
-  for (int i = 0; i < width; i++)
-  {
-    show(bars, i, "Sorting - Selection sort", step);
+    bars->selected = i;
+    show(bars, prev_bars, "Sorting - Selection sort", step);
     int min = i;
     for (int j = i; j < width; j++)
     {
-      if (bars[j] < bars[min])
+      if (bars->bars[j] < bars->bars[min])
       {
-        show(bars, j, "Sorting - Selection sort", step);
+        bars->selected = j;
+        show(bars, prev_bars, "Sorting - Selection sort", step);
         min = j;
       }
     }
     inverse(bars, i, min);
   }
-  highlight_all(bars);
+  highlight_all(bars, prev_bars);
 }
 
-void bubble_sort(bar bars[width])
+void bubble_sort(barlist *bars, barlist *prev_bars)
 {
   int j = 0;
   while (true)
@@ -106,9 +219,10 @@ void bubble_sort(bar bars[width])
     bool swapped = false;
     for (int i = 0; i < width - 1 - j; i++)
     {
-      if (bars[i] > bars[i + 1])
+      if (bars->bars[i] > bars->bars[i + 1])
       {
-        show(bars, i, "Sorting - Bubble sort", step);
+        bars->selected = i;
+        show(bars, prev_bars, "Sorting - Bubble sort", step);
         swapped = true;
         inverse(bars, i, i + 1);
       }
@@ -117,10 +231,10 @@ void bubble_sort(bar bars[width])
     if (!swapped)
       break;
   }
-  highlight_all(bars);
+  highlight_all(bars, prev_bars);
 }
 
-void merge_sorted_arrays(bar bars[], int left, int middle, int right)
+void merge_sorted_arrays(barlist *bars, barlist *prev_bars, int left, int middle, int right)
 {
   int left_len = middle - left + 1;
   int right_len = right - middle;
@@ -129,27 +243,28 @@ void merge_sorted_arrays(bar bars[], int left, int middle, int right)
   bar right_temp[right_len];
 
   for (int i = 0; i < left_len; i++)
-    left_temp[i] = bars[left + i];
+    left_temp[i] = bars->bars[left + i];
   for (int i = 0; i < right_len; i++)
-    right_temp[i] = bars[middle + 1 + i];
+    right_temp[i] = bars->bars[middle + 1 + i];
 
   for (int left_count = 0, right_count = 0, total_count = left; total_count <= right; total_count++)
   {
     if ((left_count < left_len) && (right_count >= right_len || left_temp[left_count] <= right_temp[right_count]))
     {
-      bars[total_count] = left_temp[left_count];
+      bars->bars[total_count] = left_temp[left_count];
       left_count++;
     }
     else
     {
-      bars[total_count] = right_temp[right_count];
+      bars->bars[total_count] = right_temp[right_count];
       right_count++;
     }
-    show(bars, total_count, "Sorting - Merge sorting", step);
+    bars->selected = total_count;
+    show(bars, prev_bars, "Sorting - Merge sorting", step);
   }
 }
 
-void merge_sort_recursion(bar bars[], int left, int right)
+void merge_sort_recursion(barlist *bars, barlist *prev_bars, int left, int right)
 {
 
   if (left >= right)
@@ -157,16 +272,16 @@ void merge_sort_recursion(bar bars[], int left, int right)
 
   int middle = left + (right - left) / 2;
 
-  merge_sort_recursion(bars, left, middle);
-  merge_sort_recursion(bars, middle + 1, right);
+  merge_sort_recursion(bars, prev_bars, left, middle);
+  merge_sort_recursion(bars, prev_bars, middle + 1, right);
 
-  merge_sorted_arrays(bars, left, middle, right);
+  merge_sorted_arrays(bars, prev_bars, left, middle, right);
 }
 
-void merge_sort(bar bars[], int len)
+void merge_sort(barlist *bars, barlist *prev_bars)
 {
-  merge_sort_recursion(bars, 0, len - 1);
-  highlight_all(bars);
+  merge_sort_recursion(bars, prev_bars, 0, bars->len - 1);
+  highlight_all(bars, prev_bars);
 }
 
 // Prints the version
@@ -190,6 +305,7 @@ void help(void)
   printf("\t%s-s, --size: %sIf the automatic size doesn't fit your terminal, specify it manually with this parameter (ex --size 100 50 -> width of 100 and height of 50)%s\n", PURPLE, YELLOW, RESET);
   printf("\t%s-l, --list: %sPrints the list of algorithms with their ID%s\n", PURPLE, YELLOW, RESET);
   printf("\t%s-i, --id: %sSpecify the ID of the algorithm you want to visualize (-l to print the list, default: 0 for ALL)%s\n", PURPLE, YELLOW, RESET);
+  printf("\t%s-p, --precision: %sSpecify the precision of the bars (value goes from one to [p])%s\n", PURPLE, YELLOW, RESET);
 }
 
 void list(void)
@@ -242,6 +358,23 @@ int main(int argc, char *argv[])
         return 1;
       }
     }
+    else if (strcmp(arg, "--precision") == 0 || strcmp(arg, "-p") == 0)
+    {
+      if (argc <= 1)
+      {
+        printf("%s[ x ] : An argument is required after -p%s", RED, RESET);
+        return 1;
+      }
+
+      precision = atoi(*++argv);
+      argc--;
+
+      if (precision <= 2)
+      {
+        printf("%s[ x ] : The delay must be a number higher than 2%s", RED, RESET);
+        return 1;
+      }
+    }
     else if (strcmp(arg, "--id") == 0 || strcmp(arg, "-i") == 0)
     {
       if (argc <= 1)
@@ -290,38 +423,61 @@ int main(int argc, char *argv[])
   if (height == 0 && width == 0)
   {
     get_terminal_size(&width, &height);
-    height -= 4;
+    height -= TOP_SPACE;
     width /= 2;
   }
+  
+  clear_terminal();
+  hide_cursor();
 
-  bar bars[width];
+  set_signal_action();
+  setvbuf(stdout, NULL, _IOFBF, 32768);
+
+
+  barlist bars;
+  bars.len = width;
+  bars.bars = malloc(sizeof(bar) * width);
+  bars.selected = -1;
+
+  barlist prev_bars;
+  prev_bars.len = width;
+  prev_bars.bars = malloc(sizeof(bar) * width);
+  prev_bars.selected = -1;
+
 
   for (int i = 0; i < width; i++)
   {
-    bars[i] = (1 + i) * 100 / width;
+    bars.bars[i] = (1 + i) * precision / width;
+    prev_bars.bars[i] = 0;
   }
+  
 
-  highlight_all(bars);
-  shuffle(bars);
+  show(&bars, &prev_bars, "Preparing", 1000);
 
+  highlight_all(&bars, &prev_bars);
+
+  shuffle(&bars, &prev_bars);
   switch (algorithm)
   {
   case 1:
-    selection_sort(bars);
+    selection_sort(&bars, &prev_bars);
     break;
   case 2:
-    merge_sort(bars, width);
+    merge_sort(&bars, &prev_bars);
     break;
   case 3:
-    bubble_sort(bars);
+    bubble_sort(&bars, &prev_bars);
     break;
   default:
-    selection_sort(bars);
-    shuffle(bars);
-    merge_sort(bars, width);
-    shuffle(bars);
-    bubble_sort(bars);
-    shuffle(bars);
+    selection_sort(&bars, &prev_bars);
+    shuffle(&bars, &prev_bars);
+    merge_sort(&bars, &prev_bars);
+    shuffle(&bars, &prev_bars);
+    bubble_sort(&bars, &prev_bars);
+    shuffle(&bars, &prev_bars);
     break;
   }
+
+  free(bars.bars);
+  free(prev_bars.bars);
 }
